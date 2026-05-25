@@ -55,6 +55,18 @@ for ad-hoc shared files.
 └── files/                 ← runtime bind-mount, gitignored
 ```
 
+## Commit rules (HARD)
+
+- **Never add `Co-Authored-By: Claude …` (or any AI co-author trailer) to
+  commit messages.** Commits must look like they were written by Nurassyl
+  alone. No "Generated with Claude Code", no `🤖`, no author footer.
+- `git config user.email` is `contact@nurassyl.com` and `user.name` is
+  `Nurassyl Aldan`. Do not change these.
+- Commit subject ≤ 70 chars, imperative mood. Body wrapped at ~72 cols,
+  separated from subject by a blank line. Explain *why*, not *what*.
+- Use only the canonical project email `contact@nurassyl.com` in any file,
+  config, runbook or commit body. Do not surface any personal address.
+
 ## Operating conventions
 
 - **Secrets never enter git.** `.env` is gitignored and chmod 600. Anything

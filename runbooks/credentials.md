@@ -6,8 +6,8 @@ Step-by-step for the OAuth apps and API keys this deployment uses.
 > `https://n8n.nurassyl.com/rest/oauth2-credential/callback`
 >
 > **Use `contact@nurassyl.com`** as the registering email for every third-party
-> account below (Azure AD, Notion, Anthropic, OpenAI, etc.). The personal
-> `nurassyl.aldan@gmail.com` is reserved for non-project use.
+> account below (Azure AD, Notion, Anthropic, OpenAI, etc.) — this is the
+> single canonical email for the entire deployment.
 
 ---
 
