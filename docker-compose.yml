@@ -18,7 +18,10 @@ services:
     networks: [internal]
 
   n8n:
-    image: docker.n8n.io/n8nio/n8n:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.n8n
+    image: n8n-nurassyl:latest
     restart: unless-stopped
     depends_on:
       postgres:
@@ -51,6 +54,10 @@ services:
 
       # Enforce secure cookies because we're behind HTTPS reverse proxy
       N8N_SECURE_COOKIE: "true"
+
+      # rclone config lives inside the n8n_data volume so OAuth tokens
+      # for OneDrive persist across container rebuilds.
+      RCLONE_CONFIG: /home/node/.n8n/rclone.conf
     volumes:
       - n8n_data:/home/node/.n8n
       - ./files:/files

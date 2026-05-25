@@ -1,0 +1,10 @@
+# Custom n8n image: base + rclone binary (for OneDrive Personal access).
+# The official n8n image is a Docker Hardened Image without a package
+# manager, so we grab rclone from the official rclone image via
+# multi-stage copy.
+FROM rclone/rclone:latest AS rclone-bin
+
+FROM docker.n8n.io/n8nio/n8n:latest
+USER root
+COPY --from=rclone-bin /usr/local/bin/rclone /usr/local/bin/rclone
+USER node

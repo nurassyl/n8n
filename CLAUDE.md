@@ -8,11 +8,17 @@ and updated when architecture/decisions change. Treat it as the durable
 
 Self-hosted **n8n** deployment for **n8n.nurassyl.com**. Three goals:
 
-1. Two-way Notion ↔ Excel (OneDrive) sync. Excel = source of truth; Notion is
+1. Two-way Notion ↔ **Google Sheets** sync. Sheets = source of truth; Notion is
    mostly a view, optionally accepts edits that flow back.
 2. Expose selected n8n workflows as an **MCP server** so Claude.ai and ChatGPT
-   can be wired up as Custom Connectors and edit the Excel file via chat.
+   can be wired up as Custom Connectors and edit the Sheets via chat.
 3. In-workflow LLM nodes (Anthropic / OpenAI) for ad-hoc automation.
+
+**Note**: originally planned around Excel/OneDrive via Microsoft Graph. Pivoted
+to Google Sheets because the user's personal Microsoft Account is locked out
+of an inactive-blocked Azure AD tenant. Two ledger spreadsheets (personal +
+ИП "Тездет") are being migrated from `.xlsx` on OneDrive to Google Sheets on
+Google Drive. n8n authenticates via a Google Cloud Service Account.
 
 ## Server
 
@@ -25,11 +31,24 @@ Self-hosted **n8n** deployment for **n8n.nurassyl.com**. Three goals:
 
 ## Stack
 
-| Service  | Image                              | Purpose                           |
-|----------|------------------------------------|-----------------------------------|
-| caddy    | `caddy:2-alpine`                   | TLS termination, reverse proxy    |
-| n8n      | `docker.n8n.io/n8nio/n8n:latest`   | Workflow engine + UI + MCP server |
-| postgres | `postgres:16-alpine`               | n8n persistent storage            |
+| Service  | Image                                                 | Purpose                            |
+|----------|-------------------------------------------------------|------------------------------------|
+| caddy    | `caddy:2-alpine`                                      | TLS termination, reverse proxy     |
+| n8n      | `n8n-nurassyl:latest` (built from `Dockerfile.n8n`)   | Workflow engine + UI + MCP server  |
+| postgres | `postgres:16-alpine`                                  | n8n persistent storage             |
+
+The n8n image is a custom build: base `docker.n8n.io/n8nio/n8n:latest`
+plus the `rclone` binary copied from `rclone/rclone:latest` in a
+multi-stage build. The base image is a Docker Hardened Image with no
+package manager, so binaries must be staged in. `rclone` is invoked
+from n8n's Execute Command nodes to read/write OneDrive Personal files
+without any Azure AD app registration — `rclone` ships with a bundled
+client ID that authenticates against `login.live.com/consumers`. This
+bypasses the user's blocked Azure tenant entirely.
+
+`rclone` config (with the OAuth refresh token) is stored at
+`/home/node/.n8n/rclone.conf` inside the `n8n_data` volume, so it
+survives container rebuilds.
 
 Volumes (Docker-managed): `postgres_data`, `n8n_data`, `caddy_data`,
 `caddy_config`. A host bind-mount `./files` → `/files` is available inside n8n
@@ -45,6 +64,7 @@ for ad-hoc shared files.
 ├── .env.example           ← template, committed
 ├── docker-compose.yml     ← stack definition
 ├── Caddyfile              ← reverse-proxy + auto-TLS
+├── Dockerfile.n8n         ← custom n8n image (base + rclone)
 ├── .gitignore
 ├── runbooks/
 │   ├── deploy.md          ← bootstrap from zero
