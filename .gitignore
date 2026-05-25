@@ -1,0 +1,39 @@
+# === Secrets ===
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# === Runtime data (volumes are managed by Docker, not git) ===
+files/
+data/
+volumes/
+
+# === Backups ===
+backups/
+*.sql
+*.dump
+*.tar.gz
+*.bak
+
+# === Editor / OS ===
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# === Logs ===
+*.log
+logs/
+
+# === Local overrides ===
+docker-compose.override.yml
+compose.override.yaml
+Caddyfile.local
+
+# === Claude Code state ===
+.claude/

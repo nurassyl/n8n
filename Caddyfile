@@ -1,0 +1,39 @@
+{
+	email {$ACME_EMAIL}
+	# Use prod ACME; comment out for staging tests:
+	# acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# Larger uploads (Excel files etc.) — n8n default cap is fine,
+	# but reverse-proxy must not bottleneck.
+	request_body {
+		max_size 100MB
+	}
+
+	reverse_proxy n8n:5678 {
+		# n8n needs proper forwarded headers for OAuth callbacks / MCP
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-Host {host}
+
+		# WebSocket / SSE support (MCP transport uses SSE)
+		flush_interval -1
+	}
+
+	# Security headers
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}
