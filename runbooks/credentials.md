@@ -4,6 +4,10 @@ Step-by-step for the OAuth apps and API keys this deployment uses.
 
 > All n8n OAuth callback URLs follow the pattern:
 > `https://n8n.nurassyl.com/rest/oauth2-credential/callback`
+>
+> **Use `contact@nurassyl.com`** as the registering email for every third-party
+> account below (Azure AD, Notion, Anthropic, OpenAI, etc.). The personal
+> `nurassyl.aldan@gmail.com` is reserved for non-project use.
 
 ---
 
