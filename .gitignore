@@ -37,3 +37,7 @@ Caddyfile.local
 
 # === Claude Code state ===
 .claude/
+
+# === MCP Excel ===
+mcp-excel/data/tokens.json
+mcp-excel/node_modules/

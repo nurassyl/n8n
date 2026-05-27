@@ -1,0 +1,15 @@
+{
+  "name": "mcp-excel",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "MCP server exposing generic OneDrive Excel tools to Claude.ai / ChatGPT — discover, read, write any .xlsx workbook on the user's OneDrive.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "express": "^4.21.2",
+    "zod": "^3.23.8"
+  }
+}

@@ -63,6 +63,19 @@ services:
       - ./files:/files
     networks: [internal]
 
+  mcp-excel:
+    build:
+      context: ./mcp-excel
+      dockerfile: Dockerfile
+    image: mcp-excel:latest
+    restart: unless-stopped
+    volumes:
+      - ./mcp-excel/data:/app/data
+    environment:
+      PORT: 3000
+      TOKENS_PATH: /app/data/tokens.json
+    networks: [internal]
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
@@ -79,6 +92,7 @@ services:
       - caddy_config:/config
     depends_on:
       - n8n
+      - mcp-excel
     networks: [internal]
 
 volumes:

@@ -13,15 +13,22 @@
 		max_size 100MB
 	}
 
-	reverse_proxy n8n:5678 {
-		# n8n needs proper forwarded headers for OAuth callbacks / MCP
-		header_up X-Real-IP {remote_host}
-		header_up X-Forwarded-For {remote_host}
-		header_up X-Forwarded-Proto {scheme}
-		header_up X-Forwarded-Host {host}
+	# Custom MCP server for Claude.ai / ChatGPT — generic OneDrive Excel tools.
+	# Streamable HTTP transport at /mcp-excel — Caddy strips the prefix.
+	handle_path /mcp-excel* {
+		reverse_proxy mcp-excel:3000 {
+			flush_interval -1
+		}
+	}
 
-		# WebSocket / SSE support (MCP transport uses SSE)
-		flush_interval -1
+	# Everything else goes to n8n. The `handle` wrapper makes this mutually
+	# exclusive with the handle_path block above.
+	handle {
+		reverse_proxy n8n:5678 {
+			header_up X-Real-IP {remote_host}
+			# WebSocket / SSE support (MCP transport uses SSE)
+			flush_interval -1
+		}
 	}
 
 	# Security headers
