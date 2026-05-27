@@ -13,14 +13,13 @@
 		max_size 100MB
 	}
 
-	# n8n's built-in MCP module also publishes OAuth metadata at the root
-	# .well-known paths, which would mislead Claude.ai into using n8n's
-	# (disabled) MCP server. Override those at the Caddy layer so they
-	# resolve to mcp-excel's OAuth metadata instead.
-	handle /.well-known/oauth-authorization-server {
-		reverse_proxy mcp-excel:3000
-	}
-	handle /.well-known/oauth-protected-resource {
+	# Route ALL .well-known/* paths to mcp-excel — this covers both the
+	# bare paths (oauth-authorization-server, oauth-protected-resource)
+	# AND the path-aware variants that RFC 8414 §3.1 clients probe with
+	# the resource path appended (e.g. .well-known/.../mcp-excel). n8n's
+	# own MCP module would otherwise hijack the bare ones and return its
+	# (disabled) MCP-OAuth metadata.
+	handle /.well-known/* {
 		reverse_proxy mcp-excel:3000
 	}
 

@@ -381,32 +381,61 @@ async function main() {
     return timingSafeEqual(Buffer.from(a), Buffer.from(b));
   }
 
-  // OAuth 2.0 server metadata (RFC 8414) — Claude.ai may probe this.
-  app.get('/.well-known/oauth-authorization-server', (_req, res) => {
-    res.json({
-      issuer: PUBLIC_BASE_URL,
-      authorization_endpoint: `${PUBLIC_BASE_URL}/oauth/authorize`,
-      token_endpoint: `${PUBLIC_BASE_URL}/oauth/token`,
-      response_types_supported: ['code'],
-      grant_types_supported: ['authorization_code', 'refresh_token'],
-      token_endpoint_auth_methods_supported: ['client_secret_post', 'client_secret_basic'],
-      code_challenge_methods_supported: ['S256', 'plain'],
-      scopes_supported: ['excel'],
+  // OAuth 2.0 server metadata (RFC 8414). Clients may use either the bare
+  // path (`/.well-known/oauth-authorization-server`) or the issuer-aware
+  // suffix form (`/.well-known/oauth-authorization-server/<resource-path>`,
+  // RFC 8414 §3.1). OpenID Connect discovery (`/.well-known/openid-
+  // configuration[/<suffix>]`) gets the same response — Claude.ai probes
+  // it as part of the same handshake.
+  const authServerMeta = {
+    issuer: PUBLIC_BASE_URL,
+    authorization_endpoint: `${PUBLIC_BASE_URL}/oauth/authorize`,
+    token_endpoint: `${PUBLIC_BASE_URL}/oauth/token`,
+    registration_endpoint: `${PUBLIC_BASE_URL}/oauth/register`,
+    response_types_supported: ['code'],
+    grant_types_supported: ['authorization_code', 'refresh_token'],
+    token_endpoint_auth_methods_supported: ['client_secret_post', 'client_secret_basic', 'none'],
+    code_challenge_methods_supported: ['S256', 'plain'],
+    scopes_supported: ['excel'],
+  };
+  const protectedResourceMeta = {
+    resource: PUBLIC_BASE_URL,
+    authorization_servers: [PUBLIC_BASE_URL],
+    bearer_methods_supported: ['header'],
+    scopes_supported: ['excel'],
+  };
+
+  const sendAuthMeta = (_req, res) => res.json(authServerMeta);
+  const sendProtRes = (_req, res) => res.json(protectedResourceMeta);
+
+  app.get('/.well-known/oauth-authorization-server', sendAuthMeta);
+  app.get('/.well-known/oauth-authorization-server/*', sendAuthMeta);
+  app.get('/.well-known/openid-configuration', sendAuthMeta);
+  app.get('/.well-known/openid-configuration/*', sendAuthMeta);
+  app.get('/.well-known/oauth-protected-resource', sendProtRes);
+  app.get('/.well-known/oauth-protected-resource/*', sendProtRes);
+
+  // Dynamic Client Registration (RFC 7591). Single-client server, so we
+  // always return the same statically configured credentials regardless of
+  // what the client requests — Claude.ai will treat it as a successful DCR
+  // and use these as its client_id/secret.
+  app.post('/oauth/register', (req, res) => {
+    res.status(201).json({
+      client_id: OAUTH_CLIENT_ID,
+      client_secret: OAUTH_CLIENT_SECRET,
+      client_id_issued_at: Math.floor(Date.now() / 1000),
+      token_endpoint_auth_method: 'client_secret_post',
+      grant_types: ['authorization_code', 'refresh_token'],
+      response_types: ['code'],
+      redirect_uris: req.body?.redirect_uris || [],
+      scope: 'excel',
     });
   });
 
-  // MCP-spec helper: clients sometimes look for this too.
-  app.get('/.well-known/oauth-protected-resource', (_req, res) => {
-    res.json({
-      resource: PUBLIC_BASE_URL,
-      authorization_servers: [PUBLIC_BASE_URL],
-      bearer_methods_supported: ['header'],
-      scopes_supported: ['excel'],
-    });
-  });
-
-  app.get('/oauth/authorize', (req, res) => {
-    const { client_id, redirect_uri, state, response_type, code_challenge, code_challenge_method } = req.query;
+  function handleAuthorize(req, res) {
+    // Accept params from query (GET) or body (POST).
+    const src = req.method === 'POST' ? { ...req.body, ...req.query } : req.query;
+    const { client_id, redirect_uri, state, response_type, code_challenge, code_challenge_method, scope } = src;
     if (response_type !== 'code') {
       return res.status(400).send('unsupported_response_type');
     }
@@ -428,7 +457,9 @@ async function main() {
     redirect.searchParams.set('code', code);
     if (state) redirect.searchParams.set('state', String(state));
     res.redirect(302, redirect.toString());
-  });
+  }
+  app.get('/oauth/authorize', handleAuthorize);
+  app.post('/oauth/authorize', handleAuthorize);
 
   app.post('/oauth/token', (req, res) => {
     // Client auth can be in body or Authorization: Basic header.
