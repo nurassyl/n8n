@@ -354,6 +354,35 @@ async function main() {
 
   app.get('/healthz', (_req, res) => res.json({ status: 'ok', service: 'mcp-excel' }));
 
+  // Bearer-token auth on the MCP endpoint. If MCP_BEARER_TOKEN is not set,
+  // refuse to start in production — never accidentally serve unauthenticated.
+  const expectedToken = process.env.MCP_BEARER_TOKEN;
+  if (!expectedToken) {
+    throw new Error('MCP_BEARER_TOKEN is required — set it in the environment.');
+  }
+  function requireAuth(req, res, next) {
+    const auth = req.headers.authorization || '';
+    const m = auth.match(/^Bearer\s+(.+)$/i);
+    // Constant-time compare to avoid timing leaks on the token.
+    const ok = m && m[1].length === expectedToken.length &&
+      (function () {
+        let diff = 0;
+        for (let i = 0; i < m[1].length; i++) {
+          diff |= m[1].charCodeAt(i) ^ expectedToken.charCodeAt(i);
+        }
+        return diff === 0;
+      })();
+    if (!ok) {
+      res.set('WWW-Authenticate', 'Bearer realm="mcp-excel"');
+      return res.status(401).json({
+        jsonrpc: '2.0',
+        error: { code: -32001, message: 'Unauthorized: missing or invalid bearer token.' },
+        id: null,
+      });
+    }
+    next();
+  }
+
   const transports = new Map();
 
   const mcpHandler = async (req, res) => {
@@ -395,9 +424,9 @@ async function main() {
     }
   };
 
-  app.post('/', mcpHandler);
-  app.get('/', mcpHandler);
-  app.delete('/', mcpHandler);
+  app.post('/', requireAuth, mcpHandler);
+  app.get('/', requireAuth, mcpHandler);
+  app.delete('/', requireAuth, mcpHandler);
 
   const port = process.env.PORT || 3000;
   app.listen(port, '0.0.0.0', () => {

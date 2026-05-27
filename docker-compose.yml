@@ -74,6 +74,8 @@ services:
     environment:
       PORT: 3000
       TOKENS_PATH: /app/data/tokens.json
+      # Bearer token Claude.ai (and anyone else) must present on every MCP call.
+      MCP_BEARER_TOKEN: ${MCP_EXCEL_TOKEN}
     networks: [internal]
 
   caddy:
