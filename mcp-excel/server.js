@@ -10,7 +10,7 @@
 // persisted to disk so the server survives restarts.
 
 import express from 'express';
-import { randomUUID } from 'crypto';
+import { randomUUID, createHash, timingSafeEqual } from 'crypto';
 import { readFile, writeFile } from 'fs/promises';
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -351,32 +351,172 @@ async function main() {
 
   const app = express();
   app.use(express.json({ limit: '4mb' }));
+  app.use(express.urlencoded({ extended: true }));
 
   app.get('/healthz', (_req, res) => res.json({ status: 'ok', service: 'mcp-excel' }));
 
-  // Bearer-token auth on the MCP endpoint. If MCP_BEARER_TOKEN is not set,
-  // refuse to start in production — never accidentally serve unauthenticated.
-  const expectedToken = process.env.MCP_BEARER_TOKEN;
-  if (!expectedToken) {
-    throw new Error('MCP_BEARER_TOKEN is required — set it in the environment.');
+  // -------------------------------------------------------------------------
+  // OAuth 2.0 authorization server (single-client, single-user mode)
+  //
+  // Claude.ai's Custom Connector authenticates against us via OAuth 2.0
+  // authorization-code flow. We accept the auth request, auto-approve it,
+  // and redirect back to Claude.ai with a short-lived authorization code.
+  // The /token endpoint then trades that code (plus client_secret) for an
+  // access_token used on every MCP request.
+  // -------------------------------------------------------------------------
+
+  const OAUTH_CLIENT_ID = process.env.OAUTH_CLIENT_ID;
+  const OAUTH_CLIENT_SECRET = process.env.OAUTH_CLIENT_SECRET;
+  const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL || 'http://localhost:3000';
+  if (!OAUTH_CLIENT_ID || !OAUTH_CLIENT_SECRET) {
+    throw new Error('OAUTH_CLIENT_ID and OAUTH_CLIENT_SECRET are required.');
   }
+
+  const authCodes = new Map(); // code -> { redirect_uri, code_challenge?, code_challenge_method?, expires_at }
+  const accessTokens = new Map(); // token -> { expires_at }
+  const refreshTokens = new Map(); // refresh -> {}
+
+  function constantTimeEq(a, b) {
+    if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
+    return timingSafeEqual(Buffer.from(a), Buffer.from(b));
+  }
+
+  // OAuth 2.0 server metadata (RFC 8414) — Claude.ai may probe this.
+  app.get('/.well-known/oauth-authorization-server', (_req, res) => {
+    res.json({
+      issuer: PUBLIC_BASE_URL,
+      authorization_endpoint: `${PUBLIC_BASE_URL}/oauth/authorize`,
+      token_endpoint: `${PUBLIC_BASE_URL}/oauth/token`,
+      response_types_supported: ['code'],
+      grant_types_supported: ['authorization_code', 'refresh_token'],
+      token_endpoint_auth_methods_supported: ['client_secret_post', 'client_secret_basic'],
+      code_challenge_methods_supported: ['S256', 'plain'],
+      scopes_supported: ['excel'],
+    });
+  });
+
+  // MCP-spec helper: clients sometimes look for this too.
+  app.get('/.well-known/oauth-protected-resource', (_req, res) => {
+    res.json({
+      resource: PUBLIC_BASE_URL,
+      authorization_servers: [PUBLIC_BASE_URL],
+      bearer_methods_supported: ['header'],
+      scopes_supported: ['excel'],
+    });
+  });
+
+  app.get('/oauth/authorize', (req, res) => {
+    const { client_id, redirect_uri, state, response_type, code_challenge, code_challenge_method } = req.query;
+    if (response_type !== 'code') {
+      return res.status(400).send('unsupported_response_type');
+    }
+    if (client_id !== OAUTH_CLIENT_ID) {
+      return res.status(400).send('invalid_client');
+    }
+    if (!redirect_uri) {
+      return res.status(400).send('missing redirect_uri');
+    }
+    // Auto-approve: single-user server, no consent UI needed.
+    const code = randomUUID();
+    authCodes.set(code, {
+      redirect_uri: String(redirect_uri),
+      code_challenge: code_challenge ? String(code_challenge) : null,
+      code_challenge_method: code_challenge_method ? String(code_challenge_method) : null,
+      expires_at: Date.now() + 5 * 60 * 1000,
+    });
+    const redirect = new URL(String(redirect_uri));
+    redirect.searchParams.set('code', code);
+    if (state) redirect.searchParams.set('state', String(state));
+    res.redirect(302, redirect.toString());
+  });
+
+  app.post('/oauth/token', (req, res) => {
+    // Client auth can be in body or Authorization: Basic header.
+    let { client_id, client_secret, grant_type, code, redirect_uri, code_verifier, refresh_token } = req.body || {};
+    const basic = (req.headers.authorization || '').match(/^Basic\s+(.+)$/i);
+    if (basic) {
+      try {
+        const [u, p] = Buffer.from(basic[1], 'base64').toString('utf8').split(':');
+        client_id = client_id || u;
+        client_secret = client_secret || p;
+      } catch (_) { /* ignore */ }
+    }
+    if (!constantTimeEq(String(client_id || ''), OAUTH_CLIENT_ID)) {
+      return res.status(401).json({ error: 'invalid_client' });
+    }
+
+    if (grant_type === 'authorization_code') {
+      const entry = authCodes.get(code);
+      if (!entry || entry.expires_at < Date.now()) {
+        return res.status(400).json({ error: 'invalid_grant', error_description: 'unknown or expired code' });
+      }
+      if (entry.redirect_uri !== String(redirect_uri || '')) {
+        return res.status(400).json({ error: 'invalid_grant', error_description: 'redirect_uri mismatch' });
+      }
+      // PKCE if challenge was set; client_secret otherwise.
+      if (entry.code_challenge) {
+        if (!code_verifier) {
+          return res.status(400).json({ error: 'invalid_grant', error_description: 'code_verifier required' });
+        }
+        const method = (entry.code_challenge_method || 'plain').toUpperCase();
+        let derived;
+        if (method === 'S256') {
+          derived = createHash('sha256').update(String(code_verifier)).digest('base64')
+            .replace(/=+$/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+        } else {
+          derived = String(code_verifier);
+        }
+        if (!constantTimeEq(derived, entry.code_challenge)) {
+          return res.status(400).json({ error: 'invalid_grant', error_description: 'PKCE verification failed' });
+        }
+      } else {
+        if (!constantTimeEq(String(client_secret || ''), OAUTH_CLIENT_SECRET)) {
+          return res.status(401).json({ error: 'invalid_client' });
+        }
+      }
+      authCodes.delete(code);
+      const access = randomUUID() + randomUUID();
+      const refresh = randomUUID() + randomUUID();
+      accessTokens.set(access, { expires_at: Date.now() + 3600 * 1000 });
+      refreshTokens.set(refresh, {});
+      return res.json({
+        access_token: access,
+        token_type: 'Bearer',
+        expires_in: 3600,
+        refresh_token: refresh,
+        scope: 'excel',
+      });
+    }
+
+    if (grant_type === 'refresh_token') {
+      if (!refreshTokens.has(refresh_token)) {
+        return res.status(400).json({ error: 'invalid_grant' });
+      }
+      if (!constantTimeEq(String(client_secret || ''), OAUTH_CLIENT_SECRET)) {
+        return res.status(401).json({ error: 'invalid_client' });
+      }
+      const access = randomUUID() + randomUUID();
+      accessTokens.set(access, { expires_at: Date.now() + 3600 * 1000 });
+      return res.json({
+        access_token: access,
+        token_type: 'Bearer',
+        expires_in: 3600,
+        scope: 'excel',
+      });
+    }
+
+    return res.status(400).json({ error: 'unsupported_grant_type' });
+  });
+
   function requireAuth(req, res, next) {
     const auth = req.headers.authorization || '';
     const m = auth.match(/^Bearer\s+(.+)$/i);
-    // Constant-time compare to avoid timing leaks on the token.
-    const ok = m && m[1].length === expectedToken.length &&
-      (function () {
-        let diff = 0;
-        for (let i = 0; i < m[1].length; i++) {
-          diff |= m[1].charCodeAt(i) ^ expectedToken.charCodeAt(i);
-        }
-        return diff === 0;
-      })();
-    if (!ok) {
-      res.set('WWW-Authenticate', 'Bearer realm="mcp-excel"');
+    const token = m && accessTokens.get(m[1]);
+    if (!token || token.expires_at < Date.now()) {
+      res.set('WWW-Authenticate', `Bearer realm="mcp-excel", error="invalid_token"`);
       return res.status(401).json({
         jsonrpc: '2.0',
-        error: { code: -32001, message: 'Unauthorized: missing or invalid bearer token.' },
+        error: { code: -32001, message: 'Unauthorized: missing or expired access token.' },
         id: null,
       });
     }

@@ -74,8 +74,9 @@ services:
     environment:
       PORT: 3000
       TOKENS_PATH: /app/data/tokens.json
-      # Bearer token Claude.ai (and anyone else) must present on every MCP call.
-      MCP_BEARER_TOKEN: ${MCP_EXCEL_TOKEN}
+      PUBLIC_BASE_URL: https://n8n.nurassyl.com/mcp-excel
+      OAUTH_CLIENT_ID: ${MCP_EXCEL_OAUTH_CLIENT_ID}
+      OAUTH_CLIENT_SECRET: ${MCP_EXCEL_OAUTH_CLIENT_SECRET}
     networks: [internal]
 
   caddy:
